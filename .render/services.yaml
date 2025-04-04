@@ -10,15 +10,3 @@ services:
         value: mysql+pymysql://root:Ruben8224@localhost/middleware_db
       - key: REDIS_URL
         value: redis://default:REDISPASSWORD@REDISHOST:6379
-
-  - type: worker
-    name: celery-worker
-    env: python
-    plan: free
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "./celery_worker.sh"
-    envVars:
-      - key: DB_URL
-        value: mysql+pymysql://root:Ruben8224@localhost/middleware_db
-      - key: REDIS_URL
-        value: redis://default:REDISPASSWORD@REDISHOST:6379
