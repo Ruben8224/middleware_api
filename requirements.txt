@@ -1,9 +1,7 @@
 fastapi
-uvicorn
-celery
-pymysql
+uvicorn[standard]
 sqlalchemy
-redis
+pymysql
 python-dotenv
-cryptography>=41.0.0
-
+celery
+redis
