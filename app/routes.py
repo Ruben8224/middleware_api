@@ -1,85 +1,99 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from sqlalchemy.sql import text
 from fastapi.responses import FileResponse
 import os
 from .db import SessionLocal
 from .tasks import generar_reporte_campania
+from sqlalchemy.exc import SQLAlchemyError
 
 router = APIRouter()
 
+# Dependency para manejar la sesión de la base de datos
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 # Ruta para obtener las campañas de acuerdo a la fecha y generar el reporte
 @router.get("/reporte")
-def reporte(fecha: str):
-    session = SessionLocal()
-    result = session.execute(
-        text("CALL GetCampaniasPorFecha(:fecha)"),
-        {"fecha": fecha}
-    ).mappings().all()
+def reporte(fecha: str, db: SessionLocal = Depends(get_db)):
+    try:
+        result = db.execute(
+            text("CALL GetCampaniasPorFecha(:fecha)"),
+            {"fecha": fecha}
+        ).mappings().all()
 
-    for campania in result:
-        generar_reporte_campania.delay(
-            campania['id'],
-            campania['nombre_campania'],
-            fecha
-        )
+        for campania in result:
+            generar_reporte_campania.delay(
+                campania['id'],
+                campania['nombre_campania'],
+                fecha
+            )
 
-    session.close()
-    return {"mensaje": f"{len(result)} campañas enviadas a la cola"}
+        return {"mensaje": f"{len(result)} campañas enviadas a la cola"}
+    except SQLAlchemyError as e:
+        return {"error": str(e)}
 
 # Ruta para obtener las campañas disponibles
 @router.get("/campanias")
-def obtener_campanias():
-    session = SessionLocal()
-    result = session.execute(
-        text("SELECT * FROM TA_SMS_MAESTRO")
-    ).mappings().all()
-    session.close()
-    return result
+def obtener_campanias(db: SessionLocal = Depends(get_db)):
+    try:
+        result = db.execute(
+            text("SELECT * FROM TA_SMS_MAESTRO")
+        ).mappings().all()
+        return result
+    except SQLAlchemyError as e:
+        return {"error": str(e)}
 
 # Ruta para obtener detalles de una campaña en particular
 @router.get("/detalles/{id_maestro}")
-def obtener_detalles(id_maestro: int):
-    session = SessionLocal()
-    result = session.execute(
-        text("""
-            SELECT * FROM TA_SMS_DETALLE
-            WHERE id_maestro = :id
-            LIMIT 100
-        """),
-        {"id": id_maestro}
-    ).mappings().all()
-    session.close()
-    return result
+def obtener_detalles(id_maestro: int, db: SessionLocal = Depends(get_db)):
+    try:
+        result = db.execute(
+            text("""
+                SELECT * FROM TA_SMS_DETALLE
+                WHERE id_maestro = :id
+                LIMIT 100
+            """),
+            {"id": id_maestro}
+        ).mappings().all()
+        return result
+    except SQLAlchemyError as e:
+        return {"error": str(e)}
 
 # Ruta para consultar las campañas basadas en fecha
 @router.get("/paso/consultar-campania")
-def consultar_campania(fecha: str):
-    session = SessionLocal()
-    result = session.execute(
-        text("CALL GetCampaniasPorFecha(:fecha)"),
-        {"fecha": fecha}
-    ).mappings().all()
-    session.close()
-    return result
+def consultar_campania(fecha: str, db: SessionLocal = Depends(get_db)):
+    try:
+        result = db.execute(
+            text("CALL GetCampaniasPorFecha(:fecha)"),
+            {"fecha": fecha}
+        ).mappings().all()
+        return result
+    except SQLAlchemyError as e:
+        return {"error": str(e)}
 
 # Ruta para generar la paginación de detalles
 @router.get("/paso/generar-paginacion")
-def generar_paginacion(id: int):
-    session = SessionLocal()
-    offset = 0
-    limit = 10000
-    total = 0
-    while True:
-        result = session.execute(
-            text("CALL GetDetallesPorCampania(:id, :offset, :limit)"),
-            {"id": id, "offset": offset, "limit": limit}
-        ).fetchall()
-        if not result:
-            break
-        total += len(result)
-        offset += limit
-    session.close()
-    return {"total_registros": total}
+def generar_paginacion(id: int, db: SessionLocal = Depends(get_db)):
+    try:
+        offset = 0
+        limit = 10000
+        total = 0
+        while True:
+            result = db.execute(
+                text("CALL GetDetallesPorCampania(:id, :offset, :limit)"),
+                {"id": id, "offset": offset, "limit": limit}
+            ).fetchall()
+            if not result:
+                break
+            total += len(result)
+            offset += limit
+        return {"total_registros": total}
+    except SQLAlchemyError as e:
+        return {"error": str(e)}
 
 # Ruta para crear un archivo vacío
 @router.get("/paso/crear-archivo")
@@ -104,18 +118,14 @@ def escribir_cabeceras(nombre: str, fecha: str):
 def descargar_por_fecha(fecha: str):
     carpeta = "reportes"
 
-    # Buscar archivos que contengan la fecha en el nombre
     archivos = [f for f in os.listdir(carpeta) if fecha in f]
 
-    # Verificar si se encuentran archivos
     if not archivos:
         return {"error": "No hay archivos para esta fecha"}
 
-    # Ordenar archivos por fecha (de más reciente a más antiguo)
     archivos.sort(reverse=True)
     archivo_mas_reciente = archivos[0]
 
-    # Retornar el archivo más reciente
     return FileResponse(
         path=os.path.join(carpeta, archivo_mas_reciente),
         filename=archivo_mas_reciente,
